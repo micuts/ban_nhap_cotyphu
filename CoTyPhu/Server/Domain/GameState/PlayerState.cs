@@ -8,7 +8,7 @@ namespace Server.Domain.GameState
 {
     public class PlayerState
     {
-        public int AccountId { get; set; }
+       // public int AccountId { get; set; }
 
         public int PlayerId { get; set; }
         public int AccountId { get; set; }

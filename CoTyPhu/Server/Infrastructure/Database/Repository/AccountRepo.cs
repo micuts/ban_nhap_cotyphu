@@ -1,7 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Data.SqlClient;
-using System.Windows;
+using System.Threading.Tasks; // Thêm thư viện này
+using Npgsql;
 using Server.Infrastructure.Database.Connection;
 using Common.Domain.Models.Entities;
 
@@ -16,20 +16,21 @@ namespace Server.Infrastructure.Database.Repository
             _db = db;
         }
 
-        public Account GetById(int id)
+        // Chuyển sang Task<Account> và OpenAsync/ExecuteReaderAsync
+        public async Task<Account> GetById(int id)
         {
             try
             {
                 using var conn = _db.GetConnection();
-                conn.Open();
+                await conn.OpenAsync();
 
-                var cmd = new SqlCommand(
-                    "SELECT IDAccount, Username, PasswordHash, Email, DisplayName FROM Account WHERE IDAccount = @id",
+                var cmd = new NpgsqlCommand(
+                    "SELECT idaccount, username, passwordhash, email, displayname FROM account WHERE idaccount = @id",
                     conn);
                 cmd.Parameters.AddWithValue("@id", id);
 
-                using var rd = cmd.ExecuteReader();
-                if (rd.Read())
+                using var rd = await cmd.ExecuteReaderAsync();
+                if (await rd.ReadAsync())
                 {
                     return new Account
                     {
@@ -41,205 +42,125 @@ namespace Server.Infrastructure.Database.Repository
                     };
                 }
             }
-            catch { }
-
+            catch (Exception ex) { Console.WriteLine("Loi GetById: " + ex.Message); }
             return null;
         }
 
-        //Để đăng kí
-        public bool CheckUsername(string username)
+        public async Task<bool> CheckUsername(string username)
         {
             try
             {
                 using var conn = _db.GetConnection();
-                conn.Open();
-
-                var cmd = new SqlCommand(
-                    "SELECT COUNT(1) FROM Account WHERE Username = @u",
-                    conn);
-
+                await conn.OpenAsync();
+                var cmd = new NpgsqlCommand("SELECT COUNT(1) FROM account WHERE username = @u", conn);
                 cmd.Parameters.AddWithValue("@u", username);
-
-                return (int)cmd.ExecuteScalar() > 0;
+                return Convert.ToInt32(await cmd.ExecuteScalarAsync()) > 0;
             }
-            catch
-            {
-                return false;
-            }
+            catch { return false; }
         }
-        public bool CheckEmail(string email)
+
+        public async Task<bool> CheckEmail(string email)
         {
             try
             {
                 using var conn = _db.GetConnection();
-                conn.Open();
-
-                var cmd = new SqlCommand(
-                    "SELECT COUNT(1) FROM Account WHERE Email=@e",
-                    conn);
-
+                await conn.OpenAsync();
+                var cmd = new NpgsqlCommand("SELECT COUNT(1) FROM account WHERE email = @e", conn);
                 cmd.Parameters.AddWithValue("@e", email);
-
-                return (int)cmd.ExecuteScalar() > 0;
+                return Convert.ToInt32(await cmd.ExecuteScalarAsync()) > 0;
             }
-            catch
+            catch (Exception ex)
             {
+                Console.WriteLine("Loi CheckEmail: " + ex.Message);
                 return false;
             }
         }
-        public int Insert(Account acc)
+
+        public async Task<int> Insert(Account acc)
         {
             try
             {
                 using var conn = _db.GetConnection();
-                conn.Open();
-
-                var cmd = new SqlCommand(@"
-                    INSERT INTO Account(Username, PasswordHash, Email, DisplayName)
-                    OUTPUT INSERTED.IDAccount
-                    VALUES(@u, @p, @e, @d)", conn);
+                await conn.OpenAsync();
+                var cmd = new NpgsqlCommand(@"
+                    INSERT INTO account(username, passwordhash, email, displayname)
+                    VALUES(@u, @p, @e, @d)
+                    RETURNING idaccount", conn);
 
                 cmd.Parameters.AddWithValue("@u", acc.Username);
                 cmd.Parameters.AddWithValue("@p", acc.PasswordHash);
                 cmd.Parameters.AddWithValue("@e", acc.Email);
                 cmd.Parameters.AddWithValue("@d", (object)acc.DisplayName ?? DBNull.Value);
 
-                return (int)cmd.ExecuteScalar();
+                return Convert.ToInt32(await cmd.ExecuteScalarAsync());
             }
-            catch
+            catch (Exception ex)
             {
+                Console.WriteLine("Loi Insert: " + ex.Message);
                 return -1;
             }
         }
 
-
-        //Để đăng nhập
-        public bool CheckLogin(string username, string passwordHash)
+        public async Task<bool> CheckLogin(string username, string passwordHash)
         {
             try
             {
                 using var conn = _db.GetConnection();
-                conn.Open();
-
-                var cmd = new SqlCommand(@"
-            SELECT COUNT(1)
-            FROM Account
-            WHERE Username=@u AND PasswordHash=@p",
-                    conn);
+                await conn.OpenAsync();
+                var cmd = new NpgsqlCommand(@"
+                    SELECT COUNT(1) FROM account 
+                    WHERE username=@u AND passwordhash=@p", conn);
 
                 cmd.Parameters.AddWithValue("@u", username);
                 cmd.Parameters.AddWithValue("@p", passwordHash);
 
-                return (int)cmd.ExecuteScalar() > 0;
+                return Convert.ToInt32(await cmd.ExecuteScalarAsync()) > 0;
             }
-            catch
+            catch (Exception ex)
             {
+                Console.WriteLine("Loi CheckLogin: " + ex.Message);
                 return false;
             }
         }
 
-
-        public bool ChangePasswordByEmail(string email, string newPasswordHash)
+        public async Task<int> GetIdByLogin(string username, string passwordHash)
         {
             try
             {
                 using var conn = _db.GetConnection();
-                conn.Open();
+                await conn.OpenAsync();
+                var cmd = new NpgsqlCommand(@"
+                    SELECT idaccount FROM account 
+                    WHERE username = @u AND passwordhash = @p", conn);
 
-                var updateCmd = new SqlCommand(@"
-            UPDATE Account
-            SET PasswordHash=@new
-            WHERE Email=@e", conn);
+                cmd.Parameters.AddWithValue("@u", username);
+                cmd.Parameters.AddWithValue("@p", passwordHash);
+
+                object result = await cmd.ExecuteScalarAsync();
+                if (result != null && result != DBNull.Value)
+                    return Convert.ToInt32(result);
+            }
+            catch (Exception ex) { Console.WriteLine("Loi GetIdByLogin: " + ex.Message); }
+            return -1;
+        }
+
+        public async Task<bool> ChangePasswordByEmail(string email, string newPasswordHash)
+        {
+            try
+            {
+                using var conn = _db.GetConnection();
+                await conn.OpenAsync();
+                var updateCmd = new NpgsqlCommand(@"
+                    UPDATE account SET passwordhash = @new WHERE email = @e", conn);
 
                 updateCmd.Parameters.AddWithValue("@new", newPasswordHash);
                 updateCmd.Parameters.AddWithValue("@e", email);
 
-                return updateCmd.ExecuteNonQuery() > 0;
+                return await updateCmd.ExecuteNonQueryAsync() > 0;
             }
-            catch
+            catch (Exception ex)
             {
-                return false;
-            }
-        }
-
-
-
-
-        public bool Update(Account acc)
-        {
-            try
-            {
-                using var conn = _db.GetConnection();
-                conn.Open();
-
-                var cmd = new SqlCommand(@"
-                    UPDATE Account
-                    SET Username=@u,
-                        PasswordHash=@p,
-                        Email=@e,
-                        DisplayName=@d
-                    WHERE IDAccount=@id", conn);
-
-                cmd.Parameters.AddWithValue("@id", acc.IDAccount);
-                cmd.Parameters.AddWithValue("@u", acc.Username);
-                cmd.Parameters.AddWithValue("@p", acc.PasswordHash);
-                cmd.Parameters.AddWithValue("@e", acc.Email);
-                cmd.Parameters.AddWithValue("@d", (object)acc.DisplayName ?? DBNull.Value);
-
-                return cmd.ExecuteNonQuery() > 0;
-            }
-            catch
-            {
-                return false;
-            }
-        }
-
-
-        public int GetIdByLogin(string username, string passwordHash)
-        {
-            try
-            {
-                using var conn = _db.GetConnection();
-                conn.Open();
-
-                var cmd = new SqlCommand(@"
-            SELECT IDAccount
-            FROM Account
-            WHERE Username = @u AND PasswordHash = @p", conn);
-
-                cmd.Parameters.AddWithValue("@u", username);
-                cmd.Parameters.AddWithValue("@p", passwordHash);
-
-                object result = cmd.ExecuteScalar();
-
-                if (result != null && result != DBNull.Value)
-                    return (int)result;
-            }
-            catch
-            {
-                // log nếu cần
-            }
-
-            return -1; // login thất bại
-        }
-
-        //XÓA TÀI KHOẢN
-        public bool Delete(int id)
-        {
-            try
-            {
-                using var conn = _db.GetConnection();
-                conn.Open();
-
-                var cmd = new SqlCommand(
-                    "DELETE FROM Account WHERE IDAccount=@id", conn);
-
-                cmd.Parameters.AddWithValue("@id", id);
-
-                return cmd.ExecuteNonQuery() > 0;
-            }
-            catch
-            {
+                Console.WriteLine("Loi ChangePassword: " + ex.Message);
                 return false;
             }
         }

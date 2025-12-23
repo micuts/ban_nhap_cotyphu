@@ -1,7 +1,8 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Data.SqlClient;
-using System.Windows;
+using System.Linq;
+using System.Threading.Tasks; // Cần thêm namespace này
+using Npgsql;
 using Server.Infrastructure.Database.Connection;
 using Common.Domain.Models.Entities;
 
@@ -16,243 +17,116 @@ namespace Server.Infrastructure.Database.Repository
             _db = db;
         }
 
-
-        // Thêm 1 Player trong trận đó khi chưa bắt đầu
-        public int InsertPlayer(int idMatch, int idAccount, int characterIndex)
+        // Thêm 1 Player - Chuyển sang async Task
+        public async Task<int> InsertPlayer(int idMatch, int idAccount, int characterIndex)
         {
             try
             {
                 using var conn = _db.GetConnection();
-                conn.Open();
+                await conn.OpenAsync();
 
-                var getNewIdCmd = new SqlCommand(@"
-            SELECT COUNT(*) + 1 
-            FROM Player 
-            WHERE IDMatch = @mid", conn);
+                var getNewIdCmd = new NpgsqlCommand(@"
+                    SELECT COUNT(*) + 1 
+                    FROM ""Player"" 
+                    WHERE ""IDMatch"" = @mid", conn);
 
                 getNewIdCmd.Parameters.AddWithValue("@mid", idMatch);
-                int newIdPlayer = (int)getNewIdCmd.ExecuteScalar();
+                int newIdPlayer = Convert.ToInt32(await getNewIdCmd.ExecuteScalarAsync());
 
-                var insertCmd = new SqlCommand(@"
-            INSERT INTO Player
-            (IDMatch, IDPlayer, IDAccount, Money, Position, StatusPlayer, CharacterIndex)
-            VALUES
-            (@mid, @pid, @acc, 1500, 0, 'Ready', @char)", conn);
+                var insertCmd = new NpgsqlCommand(@"
+                    INSERT INTO ""Player""
+                    (""IDMatch"", ""IDPlayer"", ""IDAccount"", ""Money"", ""Position"", ""StatusPlayer"", ""CharacterIndex"")
+                    VALUES
+                    (@mid, @pid, @acc, 1500, 0, 'Ready', @char)", conn);
 
                 insertCmd.Parameters.AddWithValue("@mid", idMatch);
                 insertCmd.Parameters.AddWithValue("@pid", newIdPlayer);
                 insertCmd.Parameters.AddWithValue("@acc", idAccount);
                 insertCmd.Parameters.AddWithValue("@char", characterIndex);
 
-                insertCmd.ExecuteNonQuery();
+                await insertCmd.ExecuteNonQueryAsync();
                 return newIdPlayer;
             }
-            catch
+            catch (Exception ex)
             {
+                Console.WriteLine($"InsertPlayer Error: {ex.Message}");
                 return -1;
             }
         }
 
-
-
-        // Lấy thông tin của Player
-        public Common.Domain.Models.Entities.Player GetPlayer(int idMatch, int idPlayer)
-
+        // Xóa Player - Sửa lỗi cú pháp 'sync' thành 'async'
+        public async Task<bool> DeletePlayer(int idMatch, int idPlayer)
         {
             try
             {
                 using var conn = _db.GetConnection();
-                conn.Open();
+                await conn.OpenAsync();
 
-                var cmd = new SqlCommand(@"
-                    SELECT IDPlayer, IDMatch, IDAccount, Rank, Money, Position, StatusPlayer, CharacterIndex
-                    FROM Player 
-                    WHERE IDMatch=@mid AND IDPlayer=@pid",
-                    conn);
+                var cmd = new NpgsqlCommand(@"
+                    DELETE FROM ""Player""
+                    WHERE ""IDMatch""=@mid AND ""IDPlayer""=@pid", conn);
 
                 cmd.Parameters.AddWithValue("@mid", idMatch);
                 cmd.Parameters.AddWithValue("@pid", idPlayer);
 
-                using var rd = cmd.ExecuteReader();
-                if (rd.Read())
-                {
-                    return new Player
-                    {
-                        IDPlayer = rd.GetInt32(0),
-                        IDMatch = rd.GetInt32(1),
-                        IDAccount = rd.GetInt32(2),
-                        Rank = rd.IsDBNull(3) ? null : rd.GetInt32(3),
-                        Money = rd.GetInt32(4),
-                        Position = rd.GetInt32(5),
-                        StatusPlayer = rd.GetString(6),
-                        CharacterIndex = rd.GetInt32(7)
-                    };
-
-                }
-            }
-            catch { }
-
-            return null;
-        }
-
-
-        // Update sau khi xử lý logic trong RAM
-        public bool UpdateLogic(int idMatch, int idPlayer, int money, int position, string status)
-        {
-            try
-            {
-                using var conn = _db.GetConnection();
-                conn.Open();
-
-                var cmd = new SqlCommand(@"
-                    UPDATE Player
-                    SET Money=@m, Position=@p, StatusPlayer=@s
-                    WHERE IDMatch=@mid AND IDPlayer=@pid", conn);
-
-                cmd.Parameters.AddWithValue("@mid", idMatch);
-                cmd.Parameters.AddWithValue("@pid", idPlayer);
-                cmd.Parameters.AddWithValue("@m", money);
-                cmd.Parameters.AddWithValue("@p", position);
-                cmd.Parameters.AddWithValue("@s", status);
-
-                return cmd.ExecuteNonQuery() > 0;
+                return await cmd.ExecuteNonQueryAsync() > 0;
             }
             catch { return false; }
         }
 
-        public bool IsCharacterTaken(int matchId, int characterIndex)
-        {
-            using var conn = _db.GetConnection();
-            conn.Open();
-
-            var cmd = new SqlCommand(@"
-        SELECT COUNT(*) 
-        FROM Player 
-        WHERE IDMatch = @mid AND CharacterIndex = @char", conn);
-
-            cmd.Parameters.AddWithValue("@mid", matchId);
-            cmd.Parameters.AddWithValue("@char", characterIndex);
-
-            return (int)cmd.ExecuteScalar() > 0;
-        }
-
-
-        public bool DeletePlayer(int idMatch, int idPlayer)
+        // Đếm số player còn sống - Chuyển sang async Task
+        public async Task<int> CountAlive(int idMatch)
         {
             try
             {
                 using var conn = _db.GetConnection();
-                conn.Open();
+                await conn.OpenAsync();
 
-                var cmd = new SqlCommand(@"
-            DELETE FROM Player
-            WHERE IDMatch=@mid AND IDPlayer=@pid", conn);
+                var cmd = new NpgsqlCommand(@"
+                    SELECT COUNT(*) 
+                    FROM ""Player""
+                    WHERE ""IDMatch""=@mid 
+                    AND ""StatusPlayer"" NOT IN ('Bankrupt')", conn);
+
+                cmd.Parameters.AddWithValue("@mid", idMatch);
+
+                return Convert.ToInt32(await cmd.ExecuteScalarAsync());
+            }
+            catch { return 0; }
+        }
+
+        // Player phá sản - Sửa GETDATE() thành NOW() cho PostgreSQL
+        public async Task<bool> SetBankrupt(int idMatch, int idPlayer)
+        {
+            try
+            {
+                using var conn = _db.GetConnection();
+                await conn.OpenAsync();
+
+                var cmd = new NpgsqlCommand(@"
+                    UPDATE ""Player""
+                    SET ""StatusPlayer""='Bankrupt',
+                        ""CrashTime"" = NOW()
+                    WHERE ""IDMatch""=@mid AND ""IDPlayer""=@pid", conn);
 
                 cmd.Parameters.AddWithValue("@mid", idMatch);
                 cmd.Parameters.AddWithValue("@pid", idPlayer);
+                await cmd.ExecuteNonQueryAsync();
 
-                return cmd.ExecuteNonQuery() > 0;
-            }
-            catch { return false; }
-        }
-
-
-        // Player bị crash
-        public bool SetCrash(int idMatch, int idPlayer)
-        {
-            try
-            {
-                using var conn = _db.GetConnection();
-                conn.Open();
-
-                var cmd = new SqlCommand(@"
-                    UPDATE Player
-                    SET StatusPlayer='Crash'
-                    WHERE IDMatch=@mid AND IDPlayer=@pid", conn);
-
-                cmd.Parameters.AddWithValue("@mid", idMatch);
-                cmd.Parameters.AddWithValue("@pid", idPlayer);
-
-                return cmd.ExecuteNonQuery() > 0;
-            }
-            catch { return false; }
-        }
-
-
-        // Đếm số player còn sống trong match (không Bankrupt)
-        public int CountAlive(int idMatch)
-        {
-            try
-            {
-                using var conn = _db.GetConnection();
-                conn.Open();
-
-                var cmd = new SqlCommand(@"
-            SELECT COUNT(*) 
-            FROM Player
-            WHERE IDMatch=@mid 
-            AND StatusPlayer NOT IN ('Bankrupt')", conn);
-
-                cmd.Parameters.AddWithValue("@mid", idMatch);
-
-                return (int)cmd.ExecuteScalar();
-            }
-            catch
-            {
-                return 0;
-            }
-        }
-
-
-        // Player phá sản
-        public bool SetBankrupt(int idMatch, int idPlayer)
-        {
-            try
-            {
-                using var conn = _db.GetConnection();
-                conn.Open();
-
-                var cmd = new SqlCommand(@"
-                UPDATE Player
-                SET StatusPlayer='Bankrupt',
-                    CrashTime = GETDATE()
-                WHERE IDMatch=@mid AND IDPlayer=@pid", conn);
-
-                cmd.Parameters.AddWithValue("@mid", idMatch);
-                cmd.Parameters.AddWithValue("@pid", idPlayer);
-                cmd.ExecuteNonQuery();
-            }
-            catch { return false; }
-
-            try
-            {
+                // Lưu ý: Các Repo khác cũng cần chuyển sang Async để await tại đây
                 var propertyRepo = new PropertyRepo(_db);
-                propertyRepo.ResetPlayerProperties(idMatch, idPlayer);
-            }
-            catch
-            { /* không ảnh hưởng phá sản, tiếp tục*/ }
+                await propertyRepo.ResetPlayerProperties(idMatch, idPlayer);
 
-            try
-            {
                 var matchRepo = new MatchRepo(_db);
+                await matchRepo.DecreasePlayerCount(idMatch);
 
-                matchRepo.DecreasePlayerCount(idMatch);
-            }
-            catch { }
-
-            try
-            {
-                var matchRepo = new MatchRepo(_db);
-                var playerRepo = new PlayerRepo(_db);
-
-                int alive = playerRepo.CountAlive(idMatch);
-
+                int alive = await CountAlive(idMatch);
                 if (alive == 1)
-                    matchRepo.EndMatch(idMatch);
-            }
-            catch { }
+                    await matchRepo.EndMatch(idMatch);
 
-            return true;
+                return true;
+            }
+            catch { return false; }
         }
     }
 }

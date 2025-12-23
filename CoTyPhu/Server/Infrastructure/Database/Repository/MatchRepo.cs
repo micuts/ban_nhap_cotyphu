@@ -1,9 +1,7 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Data.SqlClient;
-using System.Windows;
+using System.Threading.Tasks;
+using Npgsql;
 using Server.Infrastructure.Database.Connection;
-using Common.Domain.Models.Entities;
 
 namespace Server.Infrastructure.Database.Repository
 {
@@ -16,81 +14,72 @@ namespace Server.Infrastructure.Database.Repository
             _db = db;
         }
 
-        // Tạo match mới (Waiting)
-        public int CreateMatch()
+        public async Task<int> CreateMatch()
         {
             using var conn = _db.GetConnection();
-            conn.Open();
+            await conn.OpenAsync();
+            var cmd = new NpgsqlCommand(@"
+                INSERT INTO ""Match"" (""NumberPlayer"", ""Status"")
+                VALUES (1, 'Waiting')
+                RETURNING ""IDMatch""", conn);
 
-            var cmd = new SqlCommand(@"
-            INSERT INTO Match(NumberPlayer, Status)
-            OUTPUT INSERTED.IDMatch
-            VALUES (1, 'Waiting')", conn);
-
-            return (int)cmd.ExecuteScalar();
+            var result = await cmd.ExecuteScalarAsync();
+            return result != null ? Convert.ToInt32(result) : 0;
         }
 
-        // Khi host bấm Start
-        public bool StartMatch(int idMatch)
+        public async Task<bool> StartMatch(int idMatch)
         {
             using var conn = _db.GetConnection();
-            conn.Open();
-
-            var cmd = new SqlCommand(@"
-            UPDATE Match
-            SET Status = 'Playing',
-                StartTime = GETDATE(),
-                Turn = 1
-            WHERE IDMatch = @id", conn);
+            await conn.OpenAsync();
+            var cmd = new NpgsqlCommand(@"
+                UPDATE ""Match""
+                SET ""Status"" = 'Playing',
+                    ""StartTime"" = NOW(),
+                    ""Turn"" = 1
+                WHERE ""IDMatch"" = @id", conn);
 
             cmd.Parameters.AddWithValue("@id", idMatch);
-            return cmd.ExecuteNonQuery() > 0;
+            return await cmd.ExecuteNonQueryAsync() > 0;
         }
 
-        // Tăng số người (chỉ để thống kê)
-        public bool IncreasePlayerCount(int idMatch)
+        public async Task<bool> IncreasePlayerCount(int idMatch)
         {
             using var conn = _db.GetConnection();
-            conn.Open();
-
-            var cmd = new SqlCommand(
-                "UPDATE Match SET NumberPlayer = NumberPlayer + 1 WHERE IDMatch = @id",
-                conn);
+            await conn.OpenAsync();
+            var cmd = new NpgsqlCommand(@"
+                UPDATE ""Match"" 
+                SET ""NumberPlayer"" = ""NumberPlayer"" + 1 
+                WHERE ""IDMatch"" = @id", conn);
 
             cmd.Parameters.AddWithValue("@id", idMatch);
-            return cmd.ExecuteNonQuery() > 0;
+            return await cmd.ExecuteNonQueryAsync() > 0;
         }
 
-        // Giảm số người (khi leave)
-        public bool DecreasePlayerCount(int idMatch)
+        public async Task<bool> DecreasePlayerCount(int idMatch)
         {
             using var conn = _db.GetConnection();
-            conn.Open();
-
-            var cmd = new SqlCommand(
-                "UPDATE Match SET NumberPlayer = NumberPlayer - 1 WHERE IDMatch = @id",
-                conn);
+            await conn.OpenAsync();
+            var cmd = new NpgsqlCommand(@"
+                UPDATE ""Match"" 
+                SET ""NumberPlayer"" = ""NumberPlayer"" - 1 
+                WHERE ""IDMatch"" = @id", conn);
 
             cmd.Parameters.AddWithValue("@id", idMatch);
-            return cmd.ExecuteNonQuery() > 0;
+            return await cmd.ExecuteNonQueryAsync() > 0;
         }
 
-        // Kết thúc trận
-        public bool EndMatch(int idMatch)
+        public async Task<bool> EndMatch(int idMatch)
         {
             using var conn = _db.GetConnection();
-            conn.Open();
-
-            var cmd = new SqlCommand(@"
-            UPDATE Match
-            SET EndTime = GETDATE(),
-                Status = 'End'
-            WHERE IDMatch = @id", conn);
+            await conn.OpenAsync();
+            var cmd = new NpgsqlCommand(@"
+                UPDATE ""Match""
+                SET ""EndTime"" = NOW(),
+                    ""Status"" = 'End'
+                WHERE ""IDMatch"" = @id", conn);
 
             cmd.Parameters.AddWithValue("@id", idMatch);
-            return cmd.ExecuteNonQuery() > 0;
+            return await cmd.ExecuteNonQueryAsync() > 0;
         }
     }
-
-
 }
